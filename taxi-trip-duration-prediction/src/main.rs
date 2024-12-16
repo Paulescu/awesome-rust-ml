@@ -1,24 +1,20 @@
 use anyhow::Result;
-use taxi_trip_duration_prediction::{
-    download_raw_data,
-    // scrape_links_to_parquet_files,
-    // download_parquet_file
-    // Percentage,
-};
+use taxi_trip_duration_prediction::{download_raw_data, merge_and_clean_raw_files};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("Let's start scraping!");
 
     // download raw data
-    let url = "https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page";
-    let pattern = "yellow_tripdata";
-    let output_dir = download_raw_data(url, Some(pattern)).await?;
+    let raw_data_dir = download_raw_data().await?;
 
-    // load, filter and compact into single file
-    // let percentage = Percentage::new(0.01)?;
+    // TODO: load and filter data
+    let clean_data_path = merge_and_clean_raw_files(raw_data_dir).await?;
 
-    // train xgboost model
+    // TODO: Train xgboost model
+    
+
+    // TODO: Push model to the registry
 
     Ok(())
 }

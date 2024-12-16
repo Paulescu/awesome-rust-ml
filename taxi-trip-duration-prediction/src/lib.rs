@@ -1,8 +1,14 @@
 use anyhow::Result;
 use futures::future::join_all;
 use std::path::Path;
+use polars::prelude::*;
 
-pub async fn download_raw_data(url: &str, pattern: Option<&str>) -> Result<String> {
+pub async fn download_raw_data() -> Result<String> {
+    
+    // url and pattern to match yellow_tripdata taxi data
+    let url = "https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page";
+    let pattern = Some("yellow_tripdata_2022-");
+
     // scrape the links to the parquet files
     let links = scrape_links_to_parquet_files(url, pattern).await?;
     println!("{} parquet files found", links.len());
@@ -68,47 +74,72 @@ async fn download_parquet_file(link: &str, output_dir: &Path) -> Result<()> {
     }
 
     // Download the file
-    println!("Downloading {}", output_path.display());
-
+    println!("Start downloading {}...", output_path.display());
     let response = reqwest::get(link).await?;
     let bytes = response.bytes().await?;
 
     // Write bytes to disk
     tokio::fs::write(&output_path, bytes).await?;
 
+    println!("{} completed!", output_path.display());
+
     Ok(())
 }
 
-pub struct Percentage(f64);
-
-impl Percentage {
-    pub fn new(value: f64) -> Result<Self> {
-        if value >= 0.0 && value <= 1.0 {
-            Ok(Percentage(value))
-        } else {
-            Err(anyhow::anyhow!("Percentage must be between 0 and 1"))
-        }
-    }
-
-    pub fn value(&self) -> f64 {
-        self.0
-    }
-}
-
 pub async fn merge_and_clean_raw_files(
-    input_dir: &Path,
-    percentage_rows_to_keep: Option<Percentage>,
+    input_dir: String,
 ) -> Result<String> {
     // Get list of raw files to process
     let mut entries = tokio::fs::read_dir(input_dir).await?;
-    let mut files = Vec::new();
+    let mut paths = Vec::new();
 
     while let Some(entry) = entries.next_entry().await? {
         if entry.file_type().await?.is_file() {
-            files.push(entry.path());
+            paths.push(entry.path());
         }
     }
-    println!("{} raw files to process", files.len());
+    println!("{} raw files to process", paths.len());
 
-    Ok("my_path".to_string())
+    // load files async, filter rows, compact into single fil
+    // let compact_file = tokio::fs::File::create(compact_file_path).await?;
+
+    let mut dataframes = Vec::new();
+    for path in paths {
+        println!("Processing file: {}", path.display());
+        let lazy_df = LazyFrame::scan_parquet(
+            path, ScanArgsParquet::default())?
+            .select([
+                col("tpep_pickup_datetime").cast(DataType::Date),
+                col("tpep_dropoff_datetime").cast(DataType::Date),
+                col("PULocationID").cast(DataType::Int64),
+                col("DOLocationID").cast(DataType::Int64),
+            ]);
+        
+        // append this datafame vertically
+        dataframes.push(lazy_df);
+    }
+
+    println!("Merging {} dataframes", dataframes.len());
+    let mut merged_df = concat(
+        &dataframes,
+        UnionArgs::default()
+    )?.collect()?;
+
+    // size of the merged dataframe
+    // println!("Merged dataframe size: {} rows", merged_df.height());
+    // shape of the merged dataframe
+    // println!("Merged dataframe shape: {:?}", merged_df.shape());
+    let (rows, cols) = merged_df.shape();
+    println!("Merged dataframe shape: {} rows, {} cols", rows, cols);
+
+    // save the merged dataframe to disk
+    let file_path = "final.parquet";
+    use polars::io::parquet::ParquetWriter;
+
+    // Then change the write line to:
+    ParquetWriter::new(
+        std::fs::File::create(file_path)?
+    ).finish(&mut merged_df)?;
+    
+    Ok(file_path.to_string())
 }

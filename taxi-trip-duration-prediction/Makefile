@@ -7,3 +7,9 @@ lint:
 
 run:
 	@cargo run --quiet
+
+build-release:
+	@cargo build --release
+
+run-release: build-release
+	@./target/release/taxi-trip-duration-prediction
